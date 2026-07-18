@@ -1,0 +1,19 @@
+ 🔄 資料流向與運作機制說明
+
+1. 代碼推送 (User ➔ GitLab)
+ 維運/開發人員 (User) 將編修完成的 Dashboard JSON 定義檔，透過 `git push` 統一發佈至遠端的 GitLab Repository。GitLab 作為監控面板的單一事實來源（Single Source of Truth）。
+
+
+2. 定期 Polling 與拉取 (Git Sidecar 🔄 GitLab)
+安全憑證管理：Git Sidecar 容器 透過 Kubernetes Secret 安全地載入 GitLab Project Access Token 或 Deploy Token。
+
+週期性輪詢：Sidecar 採用持續運行的守護進程模式，利用該 Token 作為身分驗證憑據，定時向遠端 GitLab 執行 Git Pull 進行輪詢（Polling），確保本地端代碼與遠端倉庫同步。
+
+3. 檔案寫入與持久化 (Git Sidecar ➔ PVC)
+ 當 Sidecar 偵測到新版本時，會將最新的 JSON 檔案下載並同步寫入 Shared Volume: PVC。
+
+4. 動態載入 (Grafana 主容器 🔄 PVC)
+ Grafana 主容器 配置了內建的 `dashboard providers`，持續監聽（Watch）該 PVC 掛載路徑下的檔案變動。
+ 一旦偵測到 JSON 更新，Grafana 將自動載入 Provisioning 並即時反映在前端畫面上，全程無需重啟 Grafana 服務或 Pod。
+
+

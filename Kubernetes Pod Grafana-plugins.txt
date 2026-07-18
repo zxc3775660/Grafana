@@ -1,0 +1,60 @@
+ 🔄 核心運作流程
+
+ 1. 遠端變更與觸發 (User ➔ GitLab)
+
+ 維運操作：當User將新的 Grafana 外部外掛原始碼或設定檔推送（Push）至 GitLab Repository (D) 後，即完成單一事實來源（Single Source of Truth）的配置。
+
+ 2. 初始化拉取階段 (Git Init 容器 ➔ GitLab)
+
+ 行為：Init 容器利用預先配置的 K8s Secrets/Service Tokens 安全憑證，向遠端 GitLab (D) 執行 `Git Pull` 或下載指定的外掛壓縮檔。
+
+ 3. 解壓與寫入持久化儲存 (Git Init 容器 ➔ PVC)
+
+ 動作 2：下載完成後，Git Init 容器 (C) 會將檔案解壓，並寫入正中間的 Shared Volume: PVC (B)。
+ ⚠️ 生命週期特性：此容器屬於短暫性任務（Run-to-completion）。一旦寫入完成，該容器便會自動結束並退出（Exit 0），釋放系統運算資源，不會在背景常駐。
+
+ 4. 主容器啟動與掛載 (Grafana 主容器 ➔ PVC)
+
+ 動作 3：K8s 控制面（Control Plane）確認 Init 容器成功退出後，左側的 Grafana 主容器 (A) 才會正式被喚醒並啟動。
+ 行為：主容器在啟動時會自動掛載同一個 PVC (B)，並將 `/var/lib/grafana/plugins` 目錄指向該儲存區，完美載入最新版的外掛元件。
+
+
+Plugins 載入方式
+
+ 🔄 Plugins 載入五步驟（簡易版）
+ 
+流程：Zip ➔ 轉 Base64 ➔ Push 到 GitLab ➔ Git Init Pull ➔ 轉回 Zip 並解壓 ➔ Grafana 載入。
+
+1. 打包：在本地把外掛目錄壓縮成 `zip` 檔。
+2. 編碼：將 `zip` 檔轉成 `base64` 純文字字串。
+3. 推倉：把這行 Base64 文字 `push` 到 GitLab 進行版本控制。
+4. 拉取：Pod 啟動時，由 Git Init 容器（Sidecar/Init 模式）`pull` 下載該文字檔。
+5. 還原：在容器內將 Base64 轉回 `zip` 並解壓 到 PVC，最後交由 Grafana 直接載入生效。
+
+Git Side car 需要base64
+
+---
+
+ 🔄 Plugins 載入五步驟（解壓直推版）
+ 
+ 流程：本地解壓並刪除 manifest.json ➔ Push 原生碎檔到 GitLab ➔ Git Init Pull ➔ 直接同步到 PVC ➔ Grafana 載入。
+ 
+1. 解壓：在本地直接把外掛 `zip` 檔解壓縮，還原成完整的外掛資料夾與內部檔案（如 `plugin.json`、`dist/` 等），並刪除manifest.json。
+2. 推倉：把這些解壓後的原始檔案與目錄直接 `push` 到 GitLab。
+3. 拉取：Pod 啟動時，由 Git Init 容器直接 `pull` 下載完整的代碼與檔案目錄。
+4. 寫入：Init 容器將拉下來的檔案直接複製/同步到 PVC 共享儲存區。
+5. 生效：Grafana 啟動後直接讀取 PVC 內就緒的檔案，載入生效。
+
+Grafana需要同意無認證plugin
+
+🔄 Plugins 載入四步驟（Zip 直推版） 
+
+流程：Zip 檔直接 Push 到 GitLab ➔ Git Init Pull 二進位檔 ➔ 在 Git Init 內執行 unzip 到 PVC ➔ Grafana 載入並驗證 manifest.json。
+
+
+1.打包：在本地把外掛目錄壓縮成 zip 檔。
+2.推倉：不經過任何轉碼，直接把這個 zip 二進位檔 push 到 GitLab。
+3.拉取：Pod 啟動時，由 Git Init 容器直接 pull（或下載） 這個 zip 檔。
+4.解壓：在Git Init內直接執行 unzip 解壓縮 到 PVC，最後交由 Grafana 載入 manifest.json 簽章並生效。
+
+Git Side car 需要unzip
